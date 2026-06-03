@@ -7,8 +7,11 @@ interface CameraPreviewProps {
   handState: HandState
   handStateRef: React.RefObject<HandState>
   isReady: boolean
+  isStarting: boolean
+  cameraActive: boolean
   error: string | null
   onVideoRef: (el: HTMLVideoElement | null) => void
+  onStartCamera: () => void
 }
 
 const ROLE_COLORS: Record<
@@ -26,8 +29,11 @@ export function CameraPreview({
   handState,
   handStateRef,
   isReady,
+  isStarting,
+  cameraActive,
   error,
   onVideoRef,
+  onStartCamera,
 }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -121,13 +127,44 @@ export function CameraPreview({
 
   return (
     <div className="camera-preview">
-      <video ref={videoRef} className="camera-video" playsInline muted />
+      <video
+        ref={videoRef}
+        className="camera-video"
+        playsInline
+        muted
+        autoPlay
+      />
       <canvas ref={canvasRef} className="camera-overlay" />
 
-      {!isReady && !error && (
-        <div className="camera-status">Starting camera & hand tracking…</div>
+      {!cameraActive && !error && (
+        <div className="camera-status camera-gate">
+          <p>Camera access is required. Click below (works in Chrome, Edge, Firefox).</p>
+          <button
+            type="button"
+            className="camera-enable-btn"
+            disabled={isStarting}
+            onClick={() => onStartCamera()}
+          >
+            {isStarting ? 'Starting…' : 'Enable camera'}
+          </button>
+        </div>
       )}
-      {error && <div className="camera-status error">{error}</div>}
+      {cameraActive && !isReady && !error && (
+        <div className="camera-status">Starting hand tracking…</div>
+      )}
+      {error && (
+        <div className="camera-status error">
+          <p>{error}</p>
+          <button
+            type="button"
+            className="camera-enable-btn"
+            disabled={isStarting}
+            onClick={() => onStartCamera()}
+          >
+            Try again
+          </button>
+        </div>
+      )}
 
       <div className="camera-badges">
         {handState.isPaused && (

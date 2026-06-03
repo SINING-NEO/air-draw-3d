@@ -26,7 +26,6 @@ function createStroke(color: string, width: number, point: [number, number, numb
 }
 
 export default function App() {
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [brushColor, setBrushColor] = useState('#22d3ee')
@@ -54,7 +53,6 @@ export default function App() {
 
   const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el
-    setVideoEl(el)
   }, [])
 
   const trackingSettings = useMemo<TrackingSettings>(
@@ -66,12 +64,15 @@ export default function App() {
     [trackingSensitivity, rotationSensitivity, zoomSensitivity],
   )
 
-  const { handState, handStateRef, isReady, error } = useHandTracking(
-    videoRef,
-    drawMode,
-    Boolean(videoEl),
-    trackingSettings,
-  )
+  const {
+    handState,
+    handStateRef,
+    isReady,
+    isStarting,
+    error,
+    cameraActive,
+    startCamera,
+  } = useHandTracking(videoRef, drawMode, trackingSettings)
 
   settingsRef.current = trackingSettings
 
@@ -194,8 +195,11 @@ export default function App() {
             handState={handState}
             handStateRef={handStateRef}
             isReady={isReady}
+            isStarting={isStarting}
+            cameraActive={cameraActive}
             error={error}
             onVideoRef={setVideoRef}
+            onStartCamera={startCamera}
           />
         </div>
       </main>

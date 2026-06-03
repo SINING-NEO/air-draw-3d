@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  FaceLandmarker,
-  FilesetResolver,
-  HandLandmarker,
-  type FaceLandmarkerResult,
-  type HandLandmarkerResult,
+import type {
+  FaceLandmarkerResult,
+  HandLandmarkerResult,
 } from '@mediapipe/tasks-vision'
 import {
   DEFAULT_ROTATION_SENSITIVITY,
@@ -12,9 +9,20 @@ import {
   DEFAULT_ZOOM_SENSITIVITY,
 } from '../config/tracking'
 import type { DrawMode, HandState, TrackingSettings } from '../types/hand'
+import {
+  acquireCameraStream,
+  attachStreamToVideo,
+  formatCameraError,
+  waitForVideoElement,
+} from '../utils/cameraSupport'
 import { DrawTipFilter } from '../utils/drawSmoothing'
 import { getFaceOrientation } from '../utils/faceOrientation'
-import { assignHandRoles, getZoomSpreadFromFocals, updatePinchStates } from '../utils/handMapping'
+import {
+  assignHandRoles,
+  getZoomSpreadFromFocals,
+  updatePinchStates,
+} from '../utils/handMapping'
+import { createVisionLandmarkers } from '../utils/mediapipeSetup'
 import { OneEuroFilter, OneEuroFilter3D } from '../utils/oneEuroFilter'
 
 const INITIAL_STATE: HandState = {
@@ -36,13 +44,6 @@ const INITIAL_STATE: HandState = {
   navOrientation: null,
 }
 
-const WASM_PATH =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-const HAND_MODEL_PATH =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
-const FACE_MODEL_PATH =
-  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task'
-
 function toLandmarks(hand: { x: number; y: number; z: number }[]) {
   return hand.map((lm) => ({ x: lm.x, y: lm.y, z: lm.z }))
 }
@@ -50,7 +51,6 @@ function toLandmarks(hand: { x: number; y: number; z: number }[]) {
 export function useHandTracking(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   drawMode: DrawMode,
-  enabled: boolean,
   settings: TrackingSettings = {
     trackingSensitivity: DEFAULT_TRACKING_SENSITIVITY,
     rotationSensitivity: DEFAULT_ROTATION_SENSITIVITY,
@@ -60,9 +60,15 @@ export function useHandTracking(
   const [handState, setHandState] = useState<HandState>(INITIAL_STATE)
   const handStateRef = useRef<HandState>(INITIAL_STATE)
   const [isReady, setIsReady] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const handLandmarkerRef = useRef<HandLandmarker | null>(null)
-  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null)
+  const [cameraActive, setCameraActive] = useState(false)
+  const handLandmarkerRef = useRef<Awaited<
+    ReturnType<typeof createVisionLandmarkers>
+  >['handLandmarker'] | null>(null)
+  const faceLandmarkerRef = useRef<Awaited<
+    ReturnType<typeof createVisionLandmarkers>
+  >['faceLandmarker'] | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const frameRef = useRef<number>(0)
   const lastDetectRef = useRef(0)
@@ -223,117 +229,80 @@ export function useHandTracking(
     [applyFaceNavigation, processHandResults],
   )
 
-  useEffect(() => {
-    if (!enabled) return
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(frameRef.current)
+    handLandmarkerRef.current?.close()
+    faceLandmarkerRef.current?.close()
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    handLandmarkerRef.current = null
+    faceLandmarkerRef.current = null
+    streamRef.current = null
+    pinchActiveRef.current = []
+    handStateRef.current = INITIAL_STATE
+    setHandState(INITIAL_STATE)
+    setIsReady(false)
+    setCameraActive(false)
+  }, [])
 
-    let cancelled = false
+  /** Call from a button click so Edge / deployed sites keep the user-gesture chain. */
+  const startCamera = useCallback(async () => {
+    if (isStarting || cameraActive) return
+    setIsStarting(true)
+    setError(null)
 
-    async function start() {
-      try {
-        const video = videoRef.current
-        if (!video) return
+    try {
+      const video = await waitForVideoElement(() => videoRef.current)
+      const stream = await acquireCameraStream()
+      await attachStreamToVideo(video, stream)
+      streamRef.current = stream
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 960 },
-            height: { ideal: 540 },
-            frameRate: { ideal: 60, max: 60 },
-            facingMode: 'user',
-          },
-          audio: false,
-        })
+      const { handLandmarker, faceLandmarker } = await createVisionLandmarkers()
+      handLandmarkerRef.current = handLandmarker
+      faceLandmarkerRef.current = faceLandmarker
+      setCameraActive(true)
 
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop())
+      function detect() {
+        if (!handLandmarkerRef.current || !faceLandmarkerRef.current || !videoRef.current) {
           return
         }
 
-        streamRef.current = stream
-        video.srcObject = stream
-        await video.play()
-
-        const vision = await FilesetResolver.forVisionTasks(WASM_PATH)
-        const [handLandmarker, faceLandmarker] = await Promise.all([
-          HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: HAND_MODEL_PATH,
-              delegate: 'GPU',
-            },
-            runningMode: 'VIDEO',
-            numHands: 2,
-          }),
-          FaceLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: FACE_MODEL_PATH,
-              delegate: 'GPU',
-            },
-            runningMode: 'VIDEO',
-            numFaces: 1,
-            outputFacialTransformationMatrixes: true,
-          }),
-        ])
-
-        if (cancelled) {
-          handLandmarker.close()
-          faceLandmarker.close()
-          stream.getTracks().forEach((t) => t.stop())
-          return
+        const vid = videoRef.current
+        const now = performance.now()
+        if (vid.readyState >= 2 && now - lastDetectRef.current >= DETECT_INTERVAL_MS) {
+          lastDetectRef.current = now
+          const handResults = handLandmarkerRef.current.detectForVideo(vid, now)
+          const faceResults = faceLandmarkerRef.current.detectForVideo(vid, now)
+          processFrame(handResults, faceResults)
         }
 
-        handLandmarkerRef.current = handLandmarker
-        faceLandmarkerRef.current = faceLandmarker
-
-        function detect() {
-          if (
-            cancelled ||
-            !handLandmarkerRef.current ||
-            !faceLandmarkerRef.current ||
-            !videoRef.current
-          ) {
-            return
-          }
-
-          const vid = videoRef.current
-          const now = performance.now()
-          if (vid.readyState >= 2 && now - lastDetectRef.current >= DETECT_INTERVAL_MS) {
-            lastDetectRef.current = now
-            const handResults = handLandmarkerRef.current.detectForVideo(vid, now)
-            const faceResults = faceLandmarkerRef.current.detectForVideo(vid, now)
-            processFrame(handResults, faceResults)
-          }
-
-          frameRef.current = requestAnimationFrame(detect)
-        }
-
-        detect()
-        setIsReady(true)
-        setError(null)
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'Camera access failed. Allow webcam permissions.',
-          )
-        }
+        frameRef.current = requestAnimationFrame(detect)
       }
+
+      detect()
+      setIsReady(true)
+      setError(null)
+    } catch (err) {
+      stopCamera()
+      setError(formatCameraError(err))
+    } finally {
+      setIsStarting(false)
     }
+  }, [cameraActive, isStarting, processFrame, stopCamera, videoRef])
 
-    start()
-
+  useEffect(() => {
     return () => {
-      cancelled = true
-      cancelAnimationFrame(frameRef.current)
-      handLandmarkerRef.current?.close()
-      faceLandmarkerRef.current?.close()
-      streamRef.current?.getTracks().forEach((t) => t.stop())
-      handLandmarkerRef.current = null
-      faceLandmarkerRef.current = null
-      streamRef.current = null
-      pinchActiveRef.current = []
-      setIsReady(false)
+      stopCamera()
     }
-  }, [enabled, processFrame, videoRef])
+  }, [stopCamera])
 
-  return { handState, handStateRef, isReady, error }
+  return {
+    handState,
+    handStateRef,
+    isReady,
+    isStarting,
+    error,
+    cameraActive,
+    startCamera,
+    stopCamera,
+  }
 }

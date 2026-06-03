@@ -315,6 +315,43 @@
   color: #fca5a5;
 }
 
+.camera-gate {
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.camera-gate p {
+  margin: 0;
+  max-width: 16rem;
+  line-height: 1.45;
+}
+
+.camera-enable-btn {
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.15);
+  color: #f0fdff;
+  border-radius: 10px;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.camera-enable-btn:hover:not(:disabled) {
+  background: rgba(34, 211, 238, 0.28);
+  border-color: #22d3ee;
+}
+
+.camera-enable-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.camera-status.error .camera-enable-btn {
+  margin-top: 0.5rem;
+}
+
 .drawing-badge {
   padding: 0.25rem 0.6rem;
   border-radius: 999px;
