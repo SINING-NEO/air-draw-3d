@@ -1,14 +1,9 @@
 /** Camera helpers — secure context, Edge-safe constraints, clear errors. */
 
+/** Simplest first — Edge rejects strict combos more often. */
 const CONSTRAINT_LADDER: MediaStreamConstraints[] = [
-  {
-    video: {
-      width: { ideal: 640, max: 1280 },
-      height: { ideal: 480, max: 720 },
-      facingMode: 'user',
-    },
-    audio: false,
-  },
+  { video: true, audio: false },
+  { video: { facingMode: 'user' }, audio: false },
   {
     video: {
       width: { ideal: 640 },
@@ -17,8 +12,14 @@ const CONSTRAINT_LADDER: MediaStreamConstraints[] = [
     },
     audio: false,
   },
-  { video: { facingMode: 'user' }, audio: false },
-  { video: true, audio: false },
+  {
+    video: {
+      width: { ideal: 640, max: 1280 },
+      height: { ideal: 480, max: 720 },
+      facingMode: 'user',
+    },
+    audio: false,
+  },
 ]
 
 export function isSecureCameraContext(): boolean {
@@ -43,15 +44,17 @@ export function formatCameraError(err: unknown): string {
   if (err instanceof DOMException) {
     switch (err.name) {
       case 'NotAllowedError':
-        return 'Camera blocked. Allow camera for this site in browser settings, then click Enable camera again.'
+        return 'Camera blocked. In Edge: Settings → Cookies and site permissions → Camera → allow this site, then click Enable camera again.'
       case 'NotFoundError':
         return 'No camera found. Plug in a webcam or enable the built-in camera.'
       case 'NotReadableError':
         return 'Camera is in use by another app (Zoom, Teams, etc.). Close it and try again.'
       case 'OverconstrainedError':
-        return 'Camera does not support the requested settings. Try another browser or update Edge/Chrome.'
+        return 'Camera does not support the requested settings. Click Try again — we will use simpler settings.'
       case 'SecurityError':
-        return 'Camera needs a secure page (https://). Do not open the built files directly from disk — use the GitHub Pages link or localhost.'
+        return 'Camera needs HTTPS. Use https://sining-neo.github.io/air-draw-3d/ or run npm run dev — not a file opened from disk.'
+      case 'AbortError':
+        return 'Camera request was cancelled. Click Enable camera again.'
       default:
         return err.message || `Camera error (${err.name}).`
     }
@@ -60,15 +63,19 @@ export function formatCameraError(err: unknown): string {
   return 'Camera access failed. Allow webcam permissions and try again.'
 }
 
+/**
+ * Call as the first await inside a click handler — Edge drops user activation
+ * if other awaits run before getUserMedia.
+ */
 export async function acquireCameraStream(): Promise<MediaStream> {
   if (!hasCameraApi()) {
     throw new Error(
-      'Camera API not available. Use a recent Chrome, Edge, or Firefox.',
+      'Camera API not available. Use Microsoft Edge (Chromium) or Chrome — not Internet Explorer.',
     )
   }
   if (!isSecureCameraContext()) {
     throw new Error(
-      'Camera only works on HTTPS or localhost. Use the live demo link (GitHub Pages) or run: npm run dev',
+      'Camera only works on HTTPS or localhost. Use the GitHub Pages demo or npm run dev.',
     )
   }
 
@@ -86,17 +93,44 @@ export async function acquireCameraStream(): Promise<MediaStream> {
   throw lastError ?? new Error('Could not open camera.')
 }
 
-export async function waitForVideoElement(
+export function getVideoElement(
   getVideo: () => HTMLVideoElement | null,
-  timeoutMs = 3000,
-): Promise<HTMLVideoElement> {
-  const start = performance.now()
-  while (performance.now() - start < timeoutMs) {
-    const el = getVideo()
-    if (el) return el
-    await new Promise((r) => requestAnimationFrame(r))
+): HTMLVideoElement {
+  const el = getVideo()
+  if (!el) {
+    throw new Error('Camera preview not ready. Refresh the page and try again.')
   }
-  throw new Error('Camera preview not ready. Refresh the page and try again.')
+  return el
+}
+
+function waitForVideoMetadata(video: HTMLVideoElement, timeoutMs = 5000): Promise<void> {
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve, reject) => {
+    const onMeta = () => {
+      cleanup()
+      resolve()
+    }
+    const onError = () => {
+      cleanup()
+      reject(new Error('Camera video failed to load.'))
+    }
+    const timer = window.setTimeout(() => {
+      cleanup()
+      resolve()
+    }, timeoutMs)
+
+    const cleanup = () => {
+      video.removeEventListener('loadedmetadata', onMeta)
+      video.removeEventListener('error', onError)
+      window.clearTimeout(timer)
+    }
+
+    video.addEventListener('loadedmetadata', onMeta)
+    video.addEventListener('error', onError)
+  })
 }
 
 /** Attach stream and play — muted + playsInline required for autoplay policies. */
@@ -106,25 +140,28 @@ export async function attachStreamToVideo(
 ): Promise<void> {
   video.srcObject = stream
   video.muted = true
+  video.defaultMuted = true
   video.playsInline = true
   video.autoplay = true
   video.setAttribute('playsinline', 'true')
+  video.setAttribute('webkit-playsinline', 'true')
+
+  await waitForVideoMetadata(video)
 
   try {
     await video.play()
-  } catch {
-    // Retry once after metadata (Edge sometimes needs loadeddata first).
-    await new Promise<void>((resolve) => {
-      const onReady = () => {
-        video.removeEventListener('loadeddata', onReady)
-        resolve()
-      }
-      video.addEventListener('loadeddata', onReady)
-      setTimeout(() => {
-        video.removeEventListener('loadeddata', onReady)
-        resolve()
-      }, 1500)
-    })
-    await video.play()
+  } catch (playErr) {
+    await waitForVideoMetadata(video, 2000)
+    try {
+      await video.play()
+    } catch {
+      throw playErr instanceof Error
+        ? playErr
+        : new Error('Could not start camera preview. Click Enable camera again.')
+    }
+  }
+
+  if (video.videoWidth === 0 || video.videoHeight === 0) {
+    throw new Error('Camera opened but video has no size. Try another browser or camera.')
   }
 }

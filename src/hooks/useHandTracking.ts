@@ -13,7 +13,7 @@ import {
   acquireCameraStream,
   attachStreamToVideo,
   formatCameraError,
-  waitForVideoElement,
+  getVideoElement,
 } from '../utils/cameraSupport'
 import { DrawTipFilter } from '../utils/drawSmoothing'
 import { getFaceOrientation } from '../utils/faceOrientation'
@@ -22,7 +22,11 @@ import {
   getZoomSpreadFromFocals,
   updatePinchStates,
 } from '../utils/handMapping'
-import { createVisionLandmarkers } from '../utils/mediapipeSetup'
+import {
+  createVisionLandmarkers,
+  formatVisionError,
+  preloadVisionWasm,
+} from '../utils/mediapipeSetup'
 import { OneEuroFilter, OneEuroFilter3D } from '../utils/oneEuroFilter'
 
 const INITIAL_STATE: HandState = {
@@ -61,6 +65,7 @@ export function useHandTracking(
   const handStateRef = useRef<HandState>(INITIAL_STATE)
   const [isReady, setIsReady] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
+  const [loadingStage, setLoadingStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cameraActive, setCameraActive] = useState(false)
   const handLandmarkerRef = useRef<Awaited<
@@ -72,6 +77,7 @@ export function useHandTracking(
   const streamRef = useRef<MediaStream | null>(null)
   const frameRef = useRef<number>(0)
   const lastDetectRef = useRef(0)
+  const detectTimestampRef = useRef(0)
   const DETECT_INTERVAL_MS = 22
   const pinchActiveRef = useRef<boolean[]>([])
   const drawTipFilterRef = useRef(new DrawTipFilter())
@@ -244,50 +250,83 @@ export function useHandTracking(
     setCameraActive(false)
   }, [])
 
-  /** Call from a button click so Edge / deployed sites keep the user-gesture chain. */
-  const startCamera = useCallback(async () => {
-    if (isStarting || cameraActive) return
-    setIsStarting(true)
-    setError(null)
+  const reportError = useCallback((message: string) => {
+    setError(message)
+    setLoadingStage(null)
+    setIsStarting(false)
+  }, [])
 
-    try {
-      const video = await waitForVideoElement(() => videoRef.current)
-      const stream = await acquireCameraStream()
-      await attachStreamToVideo(video, stream)
-      streamRef.current = stream
+  useEffect(() => {
+    preloadVisionWasm().catch(() => {})
+  }, [])
 
-      const { handLandmarker, faceLandmarker } = await createVisionLandmarkers()
-      handLandmarkerRef.current = handLandmarker
-      faceLandmarkerRef.current = faceLandmarker
-      setCameraActive(true)
-
-      function detect() {
-        if (!handLandmarkerRef.current || !faceLandmarkerRef.current || !videoRef.current) {
-          return
-        }
-
-        const vid = videoRef.current
-        const now = performance.now()
-        if (vid.readyState >= 2 && now - lastDetectRef.current >= DETECT_INTERVAL_MS) {
-          lastDetectRef.current = now
-          const handResults = handLandmarkerRef.current.detectForVideo(vid, now)
-          const faceResults = faceLandmarkerRef.current.detectForVideo(vid, now)
-          processFrame(handResults, faceResults)
-        }
-
-        frameRef.current = requestAnimationFrame(detect)
-      }
-
-      detect()
-      setIsReady(true)
+  /**
+   * Pass `stream` from the button click handler (after acquireCameraStream there)
+   * so Edge keeps user activation — do not await anything before getUserMedia.
+   */
+  const startCamera = useCallback(
+    async (streamFromGesture?: MediaStream) => {
+      if (isStarting || cameraActive) return
+      setIsStarting(true)
       setError(null)
-    } catch (err) {
-      stopCamera()
-      setError(formatCameraError(err))
-    } finally {
-      setIsStarting(false)
-    }
-  }, [cameraActive, isStarting, processFrame, stopCamera, videoRef])
+      setLoadingStage('Opening camera…')
+
+      try {
+        const stream = streamFromGesture ?? (await acquireCameraStream())
+        const video = getVideoElement(() => videoRef.current)
+        await attachStreamToVideo(video, stream)
+        streamRef.current = stream
+        setCameraActive(true)
+
+        setLoadingStage('Loading hand & face models…')
+        const { handLandmarker, faceLandmarker } = await createVisionLandmarkers()
+        handLandmarkerRef.current = handLandmarker
+        faceLandmarkerRef.current = faceLandmarker
+
+        detectTimestampRef.current = 0
+        lastDetectRef.current = 0
+
+        function detect() {
+          if (
+            !handLandmarkerRef.current ||
+            !faceLandmarkerRef.current ||
+            !videoRef.current
+          ) {
+            return
+          }
+
+          const vid = videoRef.current
+          const now = performance.now()
+          if (vid.readyState >= 2 && now - lastDetectRef.current >= DETECT_INTERVAL_MS) {
+            lastDetectRef.current = now
+            const ts = Math.max(detectTimestampRef.current + 1, Math.round(now))
+            detectTimestampRef.current = ts
+            const handResults = handLandmarkerRef.current.detectForVideo(vid, ts)
+            const faceResults = faceLandmarkerRef.current.detectForVideo(vid, ts)
+            processFrame(handResults, faceResults)
+          }
+
+          frameRef.current = requestAnimationFrame(detect)
+        }
+
+        detect()
+        setIsReady(true)
+        setError(null)
+        setLoadingStage(null)
+      } catch (err) {
+        stopCamera()
+        const msg =
+          err instanceof Error && /hand|face|model|wasm|mediapipe/i.test(err.message)
+            ? formatVisionError(err)
+            : formatCameraError(err)
+        setError(msg)
+        setLoadingStage(null)
+      } finally {
+        setIsStarting(false)
+      }
+    },
+    [cameraActive, isStarting, processFrame, stopCamera, videoRef],
+  )
 
   useEffect(() => {
     return () => {
@@ -300,9 +339,11 @@ export function useHandTracking(
     handStateRef,
     isReady,
     isStarting,
+    loadingStage,
     error,
     cameraActive,
     startCamera,
     stopCamera,
+    reportError,
   }
 }

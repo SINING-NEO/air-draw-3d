@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated from node_modules on predev/prebuild
+public/mediapipe
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

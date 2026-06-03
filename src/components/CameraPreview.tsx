@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { HandRole, HandState } from '../types/hand'
+import { acquireCameraStream, formatCameraError } from '../utils/cameraSupport'
 import { drawHandSkeleton, drawZoomFocalPoints } from '../utils/handDrawing'
 import { HandOverlaySmoother } from '../utils/handOverlaySmoother'
 
@@ -8,10 +9,12 @@ interface CameraPreviewProps {
   handStateRef: React.RefObject<HandState>
   isReady: boolean
   isStarting: boolean
+  loadingStage: string | null
   cameraActive: boolean
   error: string | null
   onVideoRef: (el: HTMLVideoElement | null) => void
-  onStartCamera: () => void
+  onStartCamera: (stream: MediaStream) => Promise<void>
+  onCameraError: (message: string) => void
 }
 
 const ROLE_COLORS: Record<
@@ -30,11 +33,22 @@ export function CameraPreview({
   handStateRef,
   isReady,
   isStarting,
+  loadingStage,
   cameraActive,
   error,
   onVideoRef,
   onStartCamera,
+  onCameraError,
 }: CameraPreviewProps) {
+  const enableCamera = async () => {
+    if (isStarting) return
+    try {
+      const stream = await acquireCameraStream()
+      await onStartCamera(stream)
+    } catch (err) {
+      onCameraError(formatCameraError(err))
+    }
+  }
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const smootherRef = useRef(new HandOverlaySmoother())
@@ -143,14 +157,14 @@ export function CameraPreview({
             type="button"
             className="camera-enable-btn"
             disabled={isStarting}
-            onClick={() => onStartCamera()}
+            onClick={() => void enableCamera()}
           >
-            {isStarting ? 'Starting…' : 'Enable camera'}
+            {isStarting ? loadingStage ?? 'Starting…' : 'Enable camera'}
           </button>
         </div>
       )}
       {cameraActive && !isReady && !error && (
-        <div className="camera-status">Starting hand tracking…</div>
+        <div className="camera-status">{loadingStage ?? 'Starting hand tracking…'}</div>
       )}
       {error && (
         <div className="camera-status error">
@@ -159,7 +173,7 @@ export function CameraPreview({
             type="button"
             className="camera-enable-btn"
             disabled={isStarting}
-            onClick={() => onStartCamera()}
+            onClick={() => void enableCamera()}
           >
             Try again
           </button>

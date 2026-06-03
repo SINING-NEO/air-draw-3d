@@ -69,9 +69,11 @@ export default function App() {
     handStateRef,
     isReady,
     isStarting,
+    loadingStage,
     error,
     cameraActive,
     startCamera,
+    reportError,
   } = useHandTracking(videoRef, drawMode, trackingSettings)
 
   settingsRef.current = trackingSettings
@@ -196,10 +198,12 @@ export default function App() {
             handStateRef={handStateRef}
             isReady={isReady}
             isStarting={isStarting}
+            loadingStage={loadingStage}
             cameraActive={cameraActive}
             error={error}
             onVideoRef={setVideoRef}
             onStartCamera={startCamera}
+            onCameraError={reportError}
           />
         </div>
       </main>
