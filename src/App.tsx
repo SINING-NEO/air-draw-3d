@@ -16,9 +16,16 @@ import { interpolatePoints } from './utils/drawSmoothing'
 import { pointDistance } from './utils/handMapping'
 import './App.css'
 
+function newStrokeId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+  return `stroke-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
 function createStroke(color: string, width: number, point: [number, number, number]): Stroke {
   return {
-    id: crypto.randomUUID(),
+    id: newStrokeId(),
     color,
     width,
     points: [point],

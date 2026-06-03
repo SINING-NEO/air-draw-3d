@@ -225,10 +225,15 @@ export function useHandTracking(
   )
 
   const processFrame = useCallback(
-    (handResults: HandLandmarkerResult, faceResults: FaceLandmarkerResult) => {
+    (
+      handResults: HandLandmarkerResult,
+      faceResults: FaceLandmarkerResult | null,
+    ) => {
       const timestamp = performance.now()
       const handStateOnly = processHandResults(handResults, timestamp)
-      const next = applyFaceNavigation(handStateOnly, faceResults, timestamp)
+      const next = faceResults
+        ? applyFaceNavigation(handStateOnly, faceResults, timestamp)
+        : handStateOnly
       handStateRef.current = next
       setHandState(next)
     },
@@ -285,25 +290,39 @@ export function useHandTracking(
 
         detectTimestampRef.current = 0
         lastDetectRef.current = 0
+        let detectFailures = 0
 
         function detect() {
-          if (
-            !handLandmarkerRef.current ||
-            !faceLandmarkerRef.current ||
-            !videoRef.current
-          ) {
+          const handLm = handLandmarkerRef.current
+          const vid = videoRef.current
+          if (!handLm || !vid) {
             return
           }
 
-          const vid = videoRef.current
           const now = performance.now()
           if (vid.readyState >= 2 && now - lastDetectRef.current >= DETECT_INTERVAL_MS) {
             lastDetectRef.current = now
             const ts = Math.max(detectTimestampRef.current + 1, Math.round(now))
             detectTimestampRef.current = ts
-            const handResults = handLandmarkerRef.current.detectForVideo(vid, ts)
-            const faceResults = faceLandmarkerRef.current.detectForVideo(vid, ts)
-            processFrame(handResults, faceResults)
+            try {
+              const handResults = handLm.detectForVideo(vid, ts)
+              const faceLm = faceLandmarkerRef.current
+              const faceResults = faceLm
+                ? faceLm.detectForVideo(vid, ts)
+                : null
+              processFrame(handResults, faceResults)
+              detectFailures = 0
+            } catch (detectErr) {
+              detectFailures += 1
+              if (detectFailures >= 45) {
+                cancelAnimationFrame(frameRef.current)
+                stopCamera()
+                setError(formatVisionError(detectErr))
+                setLoadingStage(null)
+                setIsStarting(false)
+                return
+              }
+            }
           }
 
           frameRef.current = requestAnimationFrame(detect)

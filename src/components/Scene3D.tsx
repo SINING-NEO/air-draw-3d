@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
   orientationRotationGain,
@@ -13,6 +13,7 @@ import { landmarkToWorldFromCamera } from '../utils/handMapping'
 import { orientationDelta } from '../utils/handOrientation'
 import { OneEuroFilter } from '../utils/oneEuroFilter'
 import { createStrokeMesh } from '../utils/strokeGeometry'
+import { createWebGLRenderer, disposeObject3D } from '../utils/threeCleanup'
 
 interface Scene3DProps {
   strokes: Stroke[]
@@ -35,6 +36,8 @@ export function Scene3D({
   onDrawUpdate,
 }: Scene3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [initError, setInitError] = useState<string | null>(null)
+  const [sceneKey, setSceneKey] = useState(0)
   const strokesRef = useRef(strokes)
   const brushColorRef = useRef(brushColor)
   const onDrawUpdateRef = useRef(onDrawUpdate)
@@ -49,19 +52,21 @@ export function Scene3D({
     const container = containerRef.current
     if (!container) return
 
-    const scene = new THREE.Scene()
+    setInitError(null)
+
+    let scene: THREE.Scene
+    let renderer: THREE.WebGLRenderer
+    let frameId = 0
+
+    try {
+    scene = new THREE.Scene()
     scene.background = new THREE.Color('#0a0a1a')
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100)
     camera.position.copy(DEFAULT_CAMERA)
     camera.lookAt(DEFAULT_LOOK_AT)
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-      failIfMajorPerformanceCaveat: false,
-    })
+    renderer = createWebGLRenderer()
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setClearColor('#0a0a1a', 1)
     renderer.domElement.style.display = 'block'
@@ -209,7 +214,6 @@ export function Scene3D({
       .join('|')
     let lastBrush = brushColorRef.current
     let lastTime = performance.now()
-    let frameId = 0
 
     function frame(now: number) {
       frameId = requestAnimationFrame(frame)
@@ -383,22 +387,43 @@ export function Scene3D({
       cancelAnimationFrame(frameId)
       resizeObserver.disconnect()
       view.dispose()
-      renderer.dispose()
       for (const mesh of strokeObjects.values()) {
-        mesh.geometry.dispose()
-        ;(mesh.material as THREE.Material).dispose()
+        disposeObject3D(mesh)
       }
-      cursor.geometry.dispose()
-      ;(cursor.material as THREE.Material).dispose()
-      grid.geometry.dispose()
-      ;(grid.material as THREE.Material).dispose()
-      floor.geometry.dispose()
-      ;(floor.material as THREE.Material).dispose()
+      disposeObject3D(cursor)
+      disposeObject3D(grid)
+      disposeObject3D(axes)
+      disposeObject3D(floor)
+      renderer.dispose()
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement)
       }
     }
-  }, [])
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : '3D view failed to initialize.'
+      setInitError(message)
+      return () => {}
+    }
+  }, [sceneKey])
+
+  if (initError) {
+    return (
+      <div className="scene-error scene-canvas-wrap">
+        <h2>3D view failed to load</h2>
+        <p>{initError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setInitError(null)
+            setSceneKey((k) => k + 1)
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   return <div ref={containerRef} className="scene-canvas-wrap" />
 }

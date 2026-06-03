@@ -78,27 +78,26 @@ async function withDelegateFallback<T>(
 
 export async function createVisionLandmarkers(): Promise<{
   handLandmarker: HandLandmarker
-  faceLandmarker: FaceLandmarker
+  faceLandmarker: FaceLandmarker | null
 }> {
   const vision = await preloadVisionWasm()
   const preferCpu = isEdgeBrowser()
 
-  if (preferCpu) {
-    const handLandmarker = await withDelegateFallback(
-      (d) => createHandLandmarker(vision, d),
-      true,
-    )
-    const faceLandmarker = await withDelegateFallback(
+  const handLandmarker = await withDelegateFallback(
+    (d) => createHandLandmarker(vision, d),
+    preferCpu,
+  )
+
+  let faceLandmarker: FaceLandmarker | null = null
+  try {
+    faceLandmarker = await withDelegateFallback(
       (d) => createFaceLandmarker(vision, d),
-      true,
+      preferCpu,
     )
-    return { handLandmarker, faceLandmarker }
+  } catch (faceErr) {
+    console.warn('Face landmarker unavailable — head look disabled.', faceErr)
   }
 
-  const [handLandmarker, faceLandmarker] = await Promise.all([
-    withDelegateFallback((d) => createHandLandmarker(vision, d), false),
-    withDelegateFallback((d) => createFaceLandmarker(vision, d), false),
-  ])
   return { handLandmarker, faceLandmarker }
 }
 
