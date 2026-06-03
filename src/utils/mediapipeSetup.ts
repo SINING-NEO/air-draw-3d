@@ -7,10 +7,17 @@ import {
 } from '@mediapipe/tasks-vision'
 import { isEdgeBrowser } from './browserSupport'
 
-/** Same-origin WASM — Edge often blocks or stalls third-party CDN WASM. */
-function getWasmPath(): string {
+/** Same-origin WASM — must be absolute; BASE_URL is a path, not a valid URL base. */
+export function getWasmPath(): string {
   const base = import.meta.env.BASE_URL ?? '/'
-  return new URL('mediapipe/wasm', base).href
+  const root = base.endsWith('/') ? base : `${base}/`
+  const path = `${root}mediapipe/wasm`
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`
+  }
+
+  return path
 }
 
 const HAND_MODEL_PATH =
