@@ -26,12 +26,8 @@ export class AppErrorBoundary extends Component<Props, State> {
           <h1>Something went wrong</h1>
           <p>{this.state.error.message}</p>
           <p className="app-fatal-hint">
-            Open{' '}
-            <a href="https://sining-neo.github.io/air-draw-3d/">
-              https://sining-neo.github.io/air-draw-3d/
-            </a>{' '}
-            (HTTPS, not a local file). Hard-refresh (Ctrl+Shift+R), then click Enable
-            camera.
+            Use the HTTPS demo link (not a file opened from disk). Hard-refresh
+            (Ctrl+Shift+R), then click Enable camera.
           </p>
           <button
             type="button"
