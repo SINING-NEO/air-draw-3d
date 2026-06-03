@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { HandRole, HandState } from '../types/hand'
 import { acquireCameraStream, formatCameraError } from '../utils/cameraSupport'
 import { drawHandSkeleton, drawZoomFocalPoints } from '../utils/handDrawing'
@@ -45,12 +45,10 @@ export function CameraPreview({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const smootherRef = useRef(new HandOverlaySmoother())
   const sizeRef = useRef({ w: 0, h: 0 })
-  const [previewLive, setPreviewLive] = useState(false)
 
   const enableCamera = async () => {
     if (isStarting) return
     onCameraStart?.()
-    setPreviewLive(false)
     try {
       const stream = await acquireCameraStream()
       await onStartCamera(stream)
@@ -58,12 +56,6 @@ export function CameraPreview({
       onCameraError(formatCameraError(err))
     }
   }
-
-  useEffect(() => {
-    if (!cameraActive) {
-      setPreviewLive(false)
-    }
-  }, [cameraActive])
 
   useEffect(() => {
     let frameId = 0
@@ -82,39 +74,22 @@ export function CameraPreview({
       frameId = requestAnimationFrame(draw)
       const videoEl = videoRef.current
       const canvasEl = canvasRef.current
-      if (!videoEl || !canvasEl) return
-
-      const hasFrame =
-        videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-        videoEl.videoWidth > 0 &&
-        videoEl.videoHeight > 0
-
-      if (!hasFrame) return
+      if (!videoEl || !canvasEl || videoEl.readyState < 2) return
 
       syncCanvasSize(videoEl, canvasEl)
-      setPreviewLive(true)
 
-      const ctx = canvasEl.getContext('2d', { alpha: false })
+      const ctx = canvasEl.getContext('2d', { alpha: true })
       if (!ctx) return
 
       const dt = Math.min((now - lastTime) / 1000, 0.05)
       lastTime = now
       const follow = 1 - Math.pow(0.04, dt * 60)
 
+      const state = handStateRef.current
       const w = canvasEl.width
       const h = canvasEl.height
 
-      ctx.fillStyle = '#050510'
-      ctx.fillRect(0, 0, w, h)
-
-      // Edge often shows a black <video> — draw frames on canvas instead.
-      ctx.save()
-      ctx.translate(w, 0)
-      ctx.scale(-1, 1)
-      ctx.drawImage(videoEl, 0, 0, w, h)
-      ctx.restore()
-
-      const state = handStateRef.current
+      ctx.clearRect(0, 0, w, h)
 
       if (state.hands.length > 0) {
         const rawHands = state.hands.map((hand) => hand.landmarks)
@@ -158,10 +133,6 @@ export function CameraPreview({
     }
   }, [handStateRef, videoRef])
 
-  const showGate = !cameraActive && !error
-  const showLoading =
-    cameraActive && !previewLive && !error && (isStarting || !isReady)
-
   const dualActive =
     handState.twoHandMode &&
     handState.isDrawing &&
@@ -175,11 +146,10 @@ export function CameraPreview({
         playsInline
         muted
         autoPlay
-        aria-hidden
       />
       <canvas ref={canvasRef} className="camera-overlay" />
 
-      {showGate && (
+      {!cameraActive && !error && (
         <div className="camera-status camera-gate">
           <p>Click to allow your webcam (required for hand tracking).</p>
           <button
@@ -192,10 +162,8 @@ export function CameraPreview({
           </button>
         </div>
       )}
-      {showLoading && (
-        <div className="camera-status">
-          {loadingStage ?? 'Starting camera…'}
-        </div>
+      {cameraActive && !isReady && !error && (
+        <div className="camera-status">{loadingStage ?? 'Starting hand tracking…'}</div>
       )}
       {error && (
         <div className="camera-status error">
@@ -209,10 +177,6 @@ export function CameraPreview({
             Try again
           </button>
         </div>
-      )}
-
-      {cameraActive && previewLive && (
-        <div className="camera-live-badge">Live</div>
       )}
 
       <div className="camera-badges">
