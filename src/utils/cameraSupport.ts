@@ -103,6 +103,43 @@ export function getVideoElement(
   return el
 }
 
+function waitForVideoFrame(video: HTMLVideoElement, timeoutMs = 8000): Promise<void> {
+  if (video.videoWidth > 0 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve, reject) => {
+    const onFrame = () => {
+      if (video.videoWidth > 0) {
+        cleanup()
+        resolve()
+      }
+    }
+    const onError = () => {
+      cleanup()
+      reject(new Error('Camera video failed to load frames.'))
+    }
+    const timer = window.setTimeout(() => {
+      cleanup()
+      if (video.videoWidth > 0) resolve()
+      else reject(new Error('Camera feed timed out. Click Enable camera again.'))
+    }, timeoutMs)
+
+    const cleanup = () => {
+      video.removeEventListener('loadeddata', onFrame)
+      video.removeEventListener('canplay', onFrame)
+      video.removeEventListener('playing', onFrame)
+      video.removeEventListener('error', onError)
+      window.clearTimeout(timer)
+    }
+
+    video.addEventListener('loadeddata', onFrame)
+    video.addEventListener('canplay', onFrame)
+    video.addEventListener('playing', onFrame)
+    video.addEventListener('error', onError)
+  })
+}
+
 function waitForVideoMetadata(video: HTMLVideoElement, timeoutMs = 5000): Promise<void> {
   if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
     return Promise.resolve()
@@ -138,6 +175,10 @@ export async function attachStreamToVideo(
   video: HTMLVideoElement,
   stream: MediaStream,
 ): Promise<void> {
+  for (const track of stream.getVideoTracks()) {
+    track.enabled = true
+  }
+
   video.srcObject = stream
   video.muted = true
   video.defaultMuted = true
@@ -147,6 +188,8 @@ export async function attachStreamToVideo(
   video.setAttribute('webkit-playsinline', 'true')
 
   await waitForVideoMetadata(video)
+
+  await waitForVideoFrame(video)
 
   try {
     await video.play()

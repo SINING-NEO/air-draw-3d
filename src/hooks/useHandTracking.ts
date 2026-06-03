@@ -261,6 +261,12 @@ export function useHandTracking(
     setIsStarting(false)
   }, [])
 
+  const beginCameraStart = useCallback(() => {
+    setIsStarting(true)
+    setError(null)
+    setLoadingStage('Allow camera access in the browser popup…')
+  }, [])
+
   useEffect(() => {
     preloadVisionWasm().catch(() => {})
   }, [])
@@ -364,5 +370,6 @@ export function useHandTracking(
     startCamera,
     stopCamera,
     reportError,
+    beginCameraStart,
   }
 }

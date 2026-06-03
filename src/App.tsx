@@ -58,10 +58,6 @@ export default function App() {
   brushColorRef.current = brushColor
   brushWidthRef.current = brushWidth
 
-  const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
-    videoRef.current = el
-  }, [])
-
   const trackingSettings = useMemo<TrackingSettings>(
     () => ({
       trackingSensitivity,
@@ -81,6 +77,7 @@ export default function App() {
     cameraActive,
     startCamera,
     reportError,
+    beginCameraStart,
   } = useHandTracking(videoRef, drawMode, trackingSettings)
 
   settingsRef.current = trackingSettings
@@ -201,6 +198,7 @@ export default function App() {
 
         <div className="camera-panel">
           <CameraPreview
+            videoRef={videoRef}
             handState={handState}
             handStateRef={handStateRef}
             isReady={isReady}
@@ -208,9 +206,9 @@ export default function App() {
             loadingStage={loadingStage}
             cameraActive={cameraActive}
             error={error}
-            onVideoRef={setVideoRef}
             onStartCamera={startCamera}
             onCameraError={reportError}
+            onCameraStart={beginCameraStart}
           />
         </div>
       </main>
